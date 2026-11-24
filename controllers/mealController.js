@@ -1,23 +1,24 @@
 const Meal = require('../models/Meal');
+const { dateFilter, validDate, fail } = require('../middleware/validation');
 
 exports.getMeals = async (req, res) => {
     try {
-        const meals = await Meal.find({ userId: req.userId });
+        const meals = await Meal.find({ userId: req.userId, ...dateFilter(req.query) }).sort({ date: -1, _id: 1 });
         res.json(meals);
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 };
 
 exports.getMealsByDate = async (req, res) => {
     try {
         const { date } = req.query;
-        if (!date) return res.status(400).json({ message: 'Date is required' });
+        if (!validDate(date)) return res.status(400).json({ message: 'Date is required' });
 
         const meals = await Meal.find({ userId: req.userId, date });
         res.json(meals);
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 };
 
@@ -32,12 +33,12 @@ exports.addMeal = async (req, res) => {
             protein,
             fats,
             carbs,
-            grams: grams || 100,
+            grams: grams ?? 100,
             _id,
         });
         res.status(201).json(meal);
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 };
 
@@ -60,16 +61,17 @@ exports.updateMeal = async (req, res) => {
         await meal.save();
         res.json(meal);
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 };
 
 exports.deleteMeal = async (req, res) => {
     try {
         const { id } = req.params;
-        await Meal.deleteOne({ _id: id, userId: req.userId });
+        const result = await Meal.deleteOne({ _id: id, userId: req.userId });
+        if (!result.deletedCount) return res.status(404).json({ message: 'Record not found' });
         res.json({ message: 'Meal deleted' });
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 };

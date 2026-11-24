@@ -1,4 +1,5 @@
 const Cardio = require('../models/Cardio');
+const { dateFilter, fail } = require('../middleware/validation');
 
 // POST /api/cardio — Create new cardio session
 exports.createCardio = async (req, res) => {
@@ -28,7 +29,7 @@ exports.createCardio = async (req, res) => {
         res.status(201).json(cardio);
     } catch (err) {
         console.error('Create cardio error:', err);
-        res.status(500).json({ message: 'Помилка створення кардіо-сесії', error: err.message });
+        fail(res, err);
     }
 };
 
@@ -39,13 +40,7 @@ exports.getCardio = async (req, res) => {
         
         const filter = { userId: req.userId };
         
-        if (startDate && endDate) {
-            filter.date = { $gte: startDate, $lte: endDate };
-        } else if (startDate) {
-            filter.date = { $gte: startDate };
-        } else if (endDate) {
-            filter.date = { $lte: endDate };
-        }
+        Object.assign(filter, dateFilter(req.query));
         
         if (type) {
             filter.type = type;
@@ -55,7 +50,7 @@ exports.getCardio = async (req, res) => {
         res.json(cardioSessions);
     } catch (err) {
         console.error('Get cardio error:', err);
-        res.status(500).json({ message: 'Помилка отримання кардіо-сесій', error: err.message });
+        fail(res, err);
     }
 };
 
@@ -71,7 +66,7 @@ exports.getCardioById = async (req, res) => {
         res.json(cardio);
     } catch (err) {
         console.error('Get cardio by id error:', err);
-        res.status(500).json({ message: 'Помилка отримання кардіо-сесії', error: err.message });
+        fail(res, err);
     }
 };
 
@@ -89,7 +84,8 @@ exports.updateCardio = async (req, res) => {
         // Update fields
         if (date !== undefined) cardio.date = date;
         if (type !== undefined) cardio.type = type;
-        if (type === 'other' && customType !== undefined) cardio.customType = customType;
+        if (cardio.type === 'other' && customType !== undefined) cardio.customType = customType;
+        if (cardio.type !== 'other') cardio.customType = undefined;
         if (duration !== undefined) cardio.duration = duration;
         if (distance !== undefined) cardio.distance = distance;
         if (avgHeartRate !== undefined) cardio.avgHeartRate = avgHeartRate;
@@ -104,7 +100,7 @@ exports.updateCardio = async (req, res) => {
         res.json(cardio);
     } catch (err) {
         console.error('Update cardio error:', err);
-        res.status(500).json({ message: 'Помилка оновлення кардіо-сесії', error: err.message });
+        fail(res, err);
     }
 };
 
@@ -120,7 +116,7 @@ exports.deleteCardio = async (req, res) => {
         res.json({ message: 'Кардіо-сесію видалено', cardio });
     } catch (err) {
         console.error('Delete cardio error:', err);
-        res.status(500).json({ message: 'Помилка видалення кардіо-сесії', error: err.message });
+        fail(res, err);
     }
 };
 
@@ -130,9 +126,7 @@ exports.getCardioStats = async (req, res) => {
         const { startDate, endDate } = req.query;
         
         const filter = { userId: req.userId };
-        if (startDate && endDate) {
-            filter.date = { $gte: startDate, $lte: endDate };
-        }
+        Object.assign(filter, dateFilter(req.query));
 
         const sessions = await Cardio.find(filter);
 
@@ -153,7 +147,7 @@ exports.getCardioStats = async (req, res) => {
             const speedSessions = sessions.filter(s => s.avgSpeed);
 
             if (hrSessions.length) {
-                stats.avgHeartRate = Math.round(hrSessions.reduce((sum, s) => sum + s.avgHeartRate, 0) / hrSessions.length);
+                stats.avgHeartRate = Math.round(hrSessions.reduce((sum, s) => sum + s.avgHeartRate * s.duration, 0) / hrSessions.reduce((sum, s) => sum + s.duration, 0));
             }
             if (paceSessions.length) {
                 stats.avgPace = Math.round(paceSessions.reduce((sum, s) => sum + s.avgPace, 0) / paceSessions.length * 100) / 100;
@@ -178,6 +172,6 @@ exports.getCardioStats = async (req, res) => {
         res.json(stats);
     } catch (err) {
         console.error('Get cardio stats error:', err);
-        res.status(500).json({ message: 'Помилка отримання статистики кардіо', error: err.message });
+        fail(res, err);
     }
 };

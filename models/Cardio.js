@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { validDate } = require('../middleware/validation');
 
 const cardioSchema = new mongoose.Schema({
     userId: {
@@ -8,6 +9,7 @@ const cardioSchema = new mongoose.Schema({
     },
     date: {
         type: String, // YYYY-MM-DD format
+        validate: validDate,
         required: true,
     },
     type: {
@@ -20,25 +22,32 @@ const cardioSchema = new mongoose.Schema({
     },
     duration: {
         type: Number, // minutes
+        min: 0.001,
         required: true,
     },
     distance: {
         type: Number, // km
+        min: 0,
     },
     avgHeartRate: {
         type: Number, // bpm
+        min: 0,
     },
     maxHeartRate: {
         type: Number, // bpm
+        min: 0,
     },
     calories: {
         type: Number, // kcal burned
+        min: 0,
     },
     avgPace: {
         type: Number, // min/km
+        min: 0,
     },
     avgSpeed: {
         type: Number, // km/h
+        min: 0,
     },
     elevation: {
         type: Number, // meters

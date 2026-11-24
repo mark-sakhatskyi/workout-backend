@@ -1,21 +1,22 @@
 const Workout = require('../models/Workout');
+const { dateFilter, validDate, fail } = require('../middleware/validation');
 
 exports.getWorkouts = async (req, res) => {
     try {
-        const workouts = await Workout.find({ userId: req.userId });
+        const workouts = await Workout.find({ userId: req.userId, ...dateFilter(req.query) }).sort({ date: -1, _id: 1 });
         res.json(workouts);
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 };
 
 exports.addWorkout = async (req, res) => {
     try {
-        const { date, name, weight, sets, reps, _id } = req.body;
-        const workout = await Workout.create({ userId: req.userId, date, name, weight, sets, reps, _id });
+        const { date, name, weight, sets, reps, _id, difficulty } = req.body;
+        const workout = await Workout.create({ userId: req.userId, date, name, weight, sets, reps, _id, difficulty });
         res.status(201).json(workout);
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 };
 
@@ -44,16 +45,17 @@ exports.updateWorkout = async (req, res) => {
         res.json(workout);
 
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 }
 
 exports.deleteWorkout = async (req, res) => {
     try {
         const { id } = req.params;
-        await Workout.deleteOne({ _id: id, userId: req.userId });
+        const result = await Workout.deleteOne({ _id: id, userId: req.userId });
+        if (!result.deletedCount) return res.status(404).json({ message: 'Record not found' });
         res.json({ message: 'Workout deleted' });
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 };

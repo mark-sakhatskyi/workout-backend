@@ -1,11 +1,12 @@
 const Comment = require('../models/Comment');
+const { dateFilter, validDate, fail } = require('../middleware/validation');
 
 exports.getComment = async (req, res) => {
     try {
-        const comments = await Comment.find({ userId: req.userId });
+        const comments = await Comment.find({ userId: req.userId, ...dateFilter(req.query) }).sort({ date: -1, _id: 1 });
         res.json(comments);
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 };
 
@@ -13,7 +14,7 @@ exports.getCommentByDate = async (req, res) => {
     try {
         const { date } = req.query;
 
-        if (!date) {
+        if (!validDate(date)) {
             return res.status(400).json({ message: 'Не передано дату' });
         }
 
@@ -24,7 +25,7 @@ exports.getCommentByDate = async (req, res) => {
 
         res.json(comments);
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 };
 
@@ -34,17 +35,18 @@ exports.addComment = async (req, res) => {
         const comment = await Comment.create({ userId: req.userId, date, text, _id });
         res.status(201).json(comment);
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 };
 
 exports.deleteComment = async (req, res) => {
     try {
         const { id } = req.params;
-        await Comment.deleteOne({ _id: id, userId: req.userId });
+        const result = await Comment.deleteOne({ _id: id, userId: req.userId });
+        if (!result.deletedCount) return res.status(404).json({ message: 'Record not found' });
         res.json({ message: 'Comment deleted' });
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        fail(res, err);
     }
 };
 
@@ -68,6 +70,6 @@ exports.updateComment = async (req, res) => {
 
         res.json(comment);
     } catch (err) {
-        res.status(500).json({ error: 'Failed to update comment' });
+        fail(res, err);
     }
 }
