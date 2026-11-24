@@ -12,11 +12,13 @@ async function run(){
     if(!process.env.MONGO_URI||!process.env.DATABASE_URL)throw new Error('MONGO_URI and DATABASE_URL required');
     const apply=process.argv.includes('--apply');
     if(apply&&process.env.CONFIRM_MONGO_READ_ONLY_WINDOW!=='1')throw new Error('Freeze source writes and set CONFIRM_MONGO_READ_ONLY_WINDOW=1');
-    const pool=makePool();await mongoose.connect(process.env.MONGO_URI);
+    const pool=makePool();
     try{
+        await mongoose.connect(process.env.MONGO_URI);
         if(apply)await schema(pool);
         const counts={};const src=mongoose.connection.db;
         for(const [table,model] of Object.entries(models))counts[table]=await src.collection(model.collection.name).countDocuments({});
+        counts.body_metrics = (await src.collection(models.users.collection.name).aggregate([{ $project: { n: { $size: { $ifNull: ['$bodyMetrics', []] } } } }, { $group: { _id: null, n: { $sum: '$n' } } }]).toArray())[0]?.n ?? 0;
         console.log('Source document counts:',JSON.stringify(counts));
         if(!apply){console.log('Dry-run only: source counts read; no rows or schema written. Use --apply after backup and write freeze.');return;}
         await transaction(pool,async db=>{
@@ -51,6 +53,8 @@ async function run(){
                 const after=await src.collection(model.collection.name).countDocuments({});
                 if(imported[table]!==counts[table]||after!==counts[table])throw new Error('Source count changed: '+table);
             }
+            const metricsAfter = (await src.collection(models.users.collection.name).aggregate([{ $project: { n: { $size: { $ifNull: ['$bodyMetrics', []] } } } }, { $group: { _id: null, n: { $sum: '$n' } } }]).toArray())[0]?.n ?? 0;
+            if(imported.body_metrics!==counts.body_metrics||metricsAfter!==counts.body_metrics)throw new Error('Source metric count changed');
             for(const t of tables){const r=await db.query('SELECT count(*)::int AS n FROM '+t);if(r.rows[0].n!==imported[t])throw new Error('Target count mismatch: '+t);}
             await db.query("INSERT INTO migration_runs(name,counts) VALUES('mongo-v1',$1)",[JSON.stringify(imported)]);
             console.log('Verified imported counts:',JSON.stringify(imported));

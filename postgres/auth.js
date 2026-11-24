@@ -5,7 +5,7 @@ const { OAuth2Client }=require('google-auth-library');
 const { id, transaction }=require('../db');
 const { bad, object, str, num, day, choice, metricFields }=require('./validation');
 const { wrap }=require('./records');
-const { estimateMacros }=require('../services/macroEstimator');
+const { estimateEffectiveMacros }=require('../services/macroEstimator');
 const limit=require('../middleware/rateLimit');
 const publicUser=r=>({id:r.id,_id:r.id,name:r.profile.name,email:r.email,avatar:r.profile.avatar||''});
 const token=r=>jwt.sign({userId:r.id,tokenVersion:r.token_version},process.env.JWT_SECRET,{algorithm:'HS256',expiresIn:'7d'});
@@ -104,7 +104,7 @@ function authRouter(pool,auth) {
             const response=await profile(db,updated,history);
             const goal=(await db.query('SELECT payload FROM goals WHERE user_id=$1',[user.id])).rows[0];
             if(goal){
-                const macro=estimateMacros({...p,bodyMetrics:history},goal.payload);
+                const macro=estimateEffectiveMacros({...p,bodyMetrics:history},goal.payload);
                 if(macro.calories&&macro.protein)response._macroRecalc={method:macro.method,goalDirection:macro.goalDirection,targetCaloriesPerDay:macro.calories,targetProteinPerDay:macro.protein,tdee:macro.tdee,calorieAdjustment:macro.calorieAdjustment};
             }
             return response;

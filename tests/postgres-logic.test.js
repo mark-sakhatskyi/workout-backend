@@ -15,3 +15,13 @@ test('manual goals are retained on unrelated updates and clear explicitly',()=>{
     assert.equal(goalUpdate({notes:'hello'},{manualCalories:2400}).manualCalories,2400);
     assert.equal(goalUpdate({manualCalories:null},{manualCalories:2400}).manualCalories,null);
 });
+
+const {estimateEffectiveMacros}=require('../services/macroEstimator');
+test('explicit direction and macro overrides take priority over legacy data',()=>{
+    const result=estimateEffectiveMacros({height:180,bodyMetrics:[{weight:90,date:'2026-11-24'}]}, {goalDirection:'maintain',notes:'cut',manualCalories:2400,manualProtein:170});
+    assert.equal(result.goalDirection,'maintain');
+    assert.equal(result.calories,2400);
+    assert.equal(result.protein,170);
+    assert.equal(result.method,'explicit_goal');
+    assert.throws(()=>goalUpdate({manualCalories:1000,manualProtein:400},{}));
+});

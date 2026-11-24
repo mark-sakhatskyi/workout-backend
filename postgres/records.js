@@ -10,6 +10,7 @@ async function list(db, table, userId, query = {}, exactDay = null) {
     tableName(table);
     const [from,to] = dateRange(query);
     const type = table === 'cardio' && query.type !== undefined ? choice(query.type,'type',cardioTypes) : null;
+    if (table !== 'news' && !userId) throw new Error('Missing record owner');
     const values = [userId || null, from, to, exactDay, type];
     const result = await db.query(
         'SELECT ' + projection + ' FROM ' + table +

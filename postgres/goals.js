@@ -3,7 +3,7 @@ const { id,transaction }=require('../db');
 const { wrap }=require('./records');
 const { bad, object, num, day, optionalText, str, choice }=require('./validation');
 const { metrics }=require('./auth');
-const { estimateMacros }=require('../services/macroEstimator');
+const { estimateEffectiveMacros }=require('../services/macroEstimator');
 const defaults={targetWeight:null,targetBodyFat:null,targetMuscleMass:null,targetBmi:null,targetWaterPerDay:null,targetWorkoutsPerWeek:null,targetDate:null,notes:'',customGoals:[],manualCalories:null,manualProtein:null};
 const numeric=['targetWeight','targetBodyFat','targetMuscleMass','targetBmi','targetWaterPerDay','targetWorkoutsPerWeek'];
 function goalUpdate(body,old) {
@@ -17,6 +17,7 @@ function goalUpdate(body,old) {
         const value=Object.hasOwn(body,k)?body[k]:body[legacy];
         if(value!==undefined)data[k]=value===null?null:num(value,k,1,k==='manualCalories'?20000:1000);
     }
+    if(data.manualCalories!=null&&data.manualProtein!=null&&data.manualProtein*4>data.manualCalories)throw bad('Protein energy exceeds calorie target');
     if(body.customGoals!==undefined){
         if(!Array.isArray(body.customGoals)||body.customGoals.length>100)throw bad('Invalid custom goals');
         data.customGoals=body.customGoals.map(g=>{if(!object(g))throw bad('Invalid custom goal');return { _id:typeof g._id==='string'?g._id:id(),label:str(g.label,'label'),currentValue:g.currentValue==null?null:num(g.currentValue,'currentValue',-100000),targetValue:g.targetValue==null?null:num(g.targetValue,'targetValue',-100000),unit:optionalText(g.unit||'','unit',30)};});
@@ -26,14 +27,9 @@ function goalUpdate(body,old) {
 async function response(db,user,row){
     const data={...defaults,...row?.payload};
     const history=await metrics(db,user.id);
-    const auto=estimateMacros({...user.profile,bodyMetrics:history},data);
-    const calories=data.manualCalories??auto.calories??null, protein=data.manualProtein??auto.protein??null;
-    let fats=auto.fats??null,carbs=auto.carbs??null;
-    if((data.manualCalories!=null||data.manualProtein!=null)&&calories!=null&&protein!=null){
-        fats=Math.max(0,Math.min(Math.round(calories*(auto.goalDirection==='cut'?.28:.25)/9),Math.floor(Math.max(0,calories-protein*4)/9)));
-        carbs=Math.max(0,Math.round((calories-protein*4-fats*9)/4));
-    }
-    return {...data,_id:row?.id??null,userId:user.id,targetCaloriesPerDay:calories,targetProteinPerDay:protein,_macros:{calories,protein,fats,carbs},_macroMethod:data.manualCalories!=null||data.manualProtein!=null?'explicit_goal':auto.method,_goalDirection:auto.goalDirection,_tdee:auto.tdee,_leanMass:auto.leanMass,_calorieAdjustment:auto.calorieAdjustment};
+    const auto=estimateEffectiveMacros({...user.profile,bodyMetrics:history},data);
+    const {calories=null,protein=null,fats=null,carbs=null}=auto;
+    return {...data,_id:row?.id??null,userId:user.id,targetCaloriesPerDay:calories,targetProteinPerDay:protein,_macros:{calories,protein,fats,carbs},_macroMethod:auto.method,_goalDirection:auto.goalDirection,_tdee:auto.tdee,_leanMass:auto.leanMass,_calorieAdjustment:auto.calorieAdjustment};
 }
 function routerFor(pool,auth){
     const router=express.Router();router.use(auth);

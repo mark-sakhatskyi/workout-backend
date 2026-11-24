@@ -65,7 +65,9 @@ function estimateMacros(user, goal) {
 
     let goalDirection = 'maintain';
 
-    if (isCutIntent) {
+    if (['cut', 'gain', 'maintain'].includes(goal?.goalDirection)) {
+        goalDirection = goal.goalDirection;
+    } else if (isCutIntent) {
         goalDirection = 'cut';
     } else if (isGainIntent) {
         goalDirection = 'gain';
@@ -192,7 +194,8 @@ function estimateMacros(user, goal) {
 
     // ── 7. Fats & carbs ───────────────────────────────────────────
     const fatPct      = goalDirection === 'cut' ? 0.28 : 0.25;
-    const targetFats  = Math.round(targetCalories * fatPct / 9);
+    targetProtein = Math.min(targetProtein, Math.floor(targetCalories / 4));
+    const targetFats  = Math.max(0, Math.min(Math.round(targetCalories * fatPct / 9), Math.floor((targetCalories - targetProtein * 4) / 9)));
     const targetCarbs = Math.max(0, Math.round((targetCalories - targetProtein * 4 - targetFats * 9) / 4));
 
     return {
@@ -211,4 +214,15 @@ function estimateMacros(user, goal) {
     };
 }
 
-module.exports = { estimateMacros };
+// Explicit overrides use separate fields; legacy calculated targets remain ignored.
+function estimateEffectiveMacros(user, goal) {
+    const auto = estimateMacros(user, goal);
+    const calories = goal?.manualCalories ?? auto.calories ?? null;
+    const protein = goal?.manualProtein ?? auto.protein ?? null;
+    if (goal?.manualCalories == null && goal?.manualProtein == null) return auto;
+    if (calories == null || protein == null) return { ...auto, calories, protein, fats: null, carbs: null, method: 'explicit_goal' };
+    const fats = Math.max(0, Math.min(Math.round(calories * (auto.goalDirection === 'cut' ? .28 : .25) / 9), Math.floor(Math.max(0, calories - protein * 4) / 9)));
+    const carbs = Math.max(0, Math.round((calories - protein * 4 - fats * 9) / 4));
+    return { ...auto, calories, protein, fats, carbs, method: 'explicit_goal', calorieAdjustment: auto.tdee == null ? null : calories - auto.tdee };
+}
+module.exports = { estimateMacros, estimateEffectiveMacros };
