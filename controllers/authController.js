@@ -6,6 +6,9 @@ const { OAuth2Client } = require('google-auth-library');
 const { estimateMacros } = require('../services/macroEstimator');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const validPassword = password => typeof password === 'string' && password.length >= 6 && Buffer.byteLength(password) <= 72;
+const issueToken = user => jwt.sign({ userId: user._id.toString(), tokenVersion: user.tokenVersion ?? 0 }, process.env.JWT_SECRET, { expiresIn: '7d', algorithm: 'HS256' });
 
 const allMetricFields = [
     'weight', 'neck', 'chest', 'waist', 'hips', 'biceps', 'forearm',
@@ -16,26 +19,28 @@ const allMetricFields = [
 exports.register = async (req, res) => {
     try {
         const {name, email, password} = req.body;
+        if (typeof name !== 'string' || !name.trim() || name.length > 100 || typeof email !== 'string' || email.length > 254 || !emailPattern.test(email) || !validPassword(password)) return res.status(400).json({ message: 'Invalid registration data' });
         const existingUser = await User.findOne({email});
         if (existingUser) return res.status(400).json({message: 'User already exists'});
 
         const hashedPassword = await bcrypt.hash(password, 10);
-        const user = await User.create({name, email, password: hashedPassword});
+        const user = await User.create({name: name.trim(), email, password: hashedPassword});
 
-        const token = jwt.sign({userId: user._id}, process.env.JWT_SECRET, {expiresIn: '7d'});
+        const token = issueToken(user);
         user.isOnline = true;
         await user.save();
 
         res.status(201).json({token, user: {id: user._id, name: user.name, email: user.email}});
     } catch (err) {
-        res.status(500).json({message: err.message});
+        res.status(err.name === 'ValidationError' ? 400 : err.code === 11000 ? 409 : 500).json({message: err.name === 'ValidationError' ? 'Invalid data' : err.code === 11000 ? 'Account already exists' : 'Internal server error'});
     }
 };
 
 exports.login = async (req, res) => {
     try {
         const {email, password} = req.body;
-        const user = await User.findOne({email});
+        if (typeof email !== 'string' || typeof password !== 'string' || Buffer.byteLength(password) > 72) return res.status(400).json({ message: 'Invalid credentials' });
+        const user = await User.findOne({email}).select('+tokenVersion');
         if (!user) return res.status(400).json({message: 'Invalid credentials'});
 
         // If user registered via Google and has no password
@@ -46,20 +51,21 @@ exports.login = async (req, res) => {
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return res.status(400).json({message: 'Invalid credentials'});
 
-        const token = jwt.sign({userId: user._id}, process.env.JWT_SECRET, {expiresIn: '7d'});
+        const token = issueToken(user);
         user.isOnline = true;
         await user.save();
 
         res.json({token, user: {id: user._id, name: user.name, email: user.email}});
     } catch (err) {
-        res.status(500).json({message: err.message});
+        res.status(err.name === 'ValidationError' ? 400 : err.code === 11000 ? 409 : 500).json({message: err.name === 'ValidationError' ? 'Invalid data' : err.code === 11000 ? 'Account already exists' : 'Internal server error'});
     }
 };
 
 exports.googleAuth = async (req, res) => {
     try {
         const { credential } = req.body;
-        if (!credential) {
+        if (!process.env.GOOGLE_CLIENT_ID) return res.status(503).json({ message: 'Google authentication disabled' });
+        if (typeof credential !== 'string' || !credential) {
             return res.status(400).json({ message: 'Google credential is required' });
         }
 
@@ -71,12 +77,13 @@ exports.googleAuth = async (req, res) => {
         const payload = ticket.getPayload();
         const { sub: googleId, email, name, picture } = payload;
 
-        if (!email) {
+        if (!email || payload.email_verified !== true) {
             return res.status(400).json({ message: 'Google account has no email' });
         }
 
         // Find existing user by googleId or email
-        let user = await User.findOne({ $or: [{ googleId }, { email }] });
+        let user = await User.findOne({ googleId }).select('+tokenVersion');
+        if (!user && await User.findOne({ email })) return res.status(409).json({ message: 'Sign in to your existing account before linking Google' });
 
         if (user) {
             // Link Google to existing local account if not yet linked
@@ -99,7 +106,7 @@ exports.googleAuth = async (req, res) => {
             });
         }
 
-        const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        const token = issueToken(user);
 
         res.json({
             token,
@@ -131,7 +138,7 @@ exports.getProfile = async (req, res) => {
         res.json(userObj);
     } catch (err) {
         console.error(err);
-        res.status(500).json({message: err.message});
+        res.status(err.name === 'ValidationError' ? 400 : err.code === 11000 ? 409 : 500).json({message: err.name === 'ValidationError' ? 'Invalid data' : err.code === 11000 ? 'Account already exists' : 'Internal server error'});
     }
 };
 
@@ -156,8 +163,9 @@ exports.updateProfile = async (req, res) => {
             user.bodyMetrics = [];
         }
 
-        if (bodyMetrics) {
+        if (Array.isArray(bodyMetrics) && bodyMetrics.length && bodyMetrics[0] && typeof bodyMetrics[0] === 'object') {
             const m = bodyMetrics[0];
+            if (allMetricFields.some(f => m[f] != null && m[f] !== '' && (typeof m[f] !== 'number' || !Number.isFinite(m[f]) || m[f] < 0))) return res.status(400).json({ message: 'Invalid body metrics' });
 
             // Check if there's anything meaningful to save
             const hasAnyValue = allMetricFields.some(f => m[f] != null && m[f] !== '' && m[f] !== 0);
@@ -199,7 +207,7 @@ exports.updateProfile = async (req, res) => {
                     .select('bodyMetrics height gender birthDate jobType workoutsPerWeek dailyActivity')
                     .lean();
                 const macros = estimateMacros(freshUser, goal);
-                console.log('[authController] macro recalc after profile update:', JSON.stringify(macros));
+
                 if (macros.calories && macros.protein) {
                     macroRecalcResult = {
                         method: macros.method,
@@ -231,42 +239,18 @@ exports.updateProfile = async (req, res) => {
 
     } catch (err) {
         console.error(err);
-        res.status(500).json({message: err.message});
+        res.status(err.name === 'ValidationError' ? 400 : err.code === 11000 ? 409 : 500).json({message: err.name === 'ValidationError' ? 'Invalid data' : err.code === 11000 ? 'Account already exists' : 'Internal server error'});
     }
 };
 
-exports.allUsers = async (req, res) => {
-    try {
-        const users = await User.find({ _id: { $ne: req.userId } });
-
-        const filteredUsers = users.map(user => {
-            const lastMetric = user.bodyMetrics?.length > 0
-                ? user.bodyMetrics[user.bodyMetrics.length - 1]
-                : null;
-
-            return {
-                _id: user._id,
-                name: user.name,
-                email: user.email,
-                createdAt: user.createdAt,
-                bodyMetric: lastMetric
-            };
-        });
-
-        res.status(200).json(filteredUsers);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ message: 'Server error. Unable to fetch users.' });
-    }
-};
+exports.allUsers = (req, res) => res.status(403).json({ message: 'User directory disabled' });
 
 exports.logout = async (req, res) => {
     try {
         const user = await User.findById(req.userId);
         if (!user) return res.status(404).json({ message: 'User not found' });
 
-        user.isOnline = false;
-        await user.save();
+        await User.updateOne({ _id: req.userId }, { $inc: { tokenVersion: 1 }, $set: { isOnline: false } });
 
         res.json({ message: 'Logout successful' });
     } catch (err) {

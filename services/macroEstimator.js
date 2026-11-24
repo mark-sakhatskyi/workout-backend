@@ -18,6 +18,7 @@
  * Returns { calories, protein, fats, carbs, method, goalDirection, tdee, leanMass }
  */
 function estimateMacros(user, goal) {
+    user = user || {};
     // ── 1. Latest body metrics ────────────────────────────────────
     // Scan through recent entries to find the best available value for each field.
     // This avoids losing data when a profile save created an entry without all fields.
@@ -51,8 +52,6 @@ function estimateMacros(user, goal) {
     let leanMass = null;
     if (currentWeight && currentBodyFat) {
         leanMass = Math.round(currentWeight * (1 - currentBodyFat / 100) * 10) / 10;
-    } else if (muscleMass) {
-        leanMass = muscleMass;
     }
 
     // ── 3. Goal direction ─────────────────────────────────────────

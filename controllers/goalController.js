@@ -9,7 +9,7 @@ const { estimateMacros } = require('../services/macroEstimator');
 async function buildGoalResponse(goal, userId) {
     const user = await User.findById(userId).select('bodyMetrics height gender birthDate jobType workoutsPerWeek dailyActivity').lean();
     const macros = estimateMacros(user, goal);
-    console.log('[goalController] estimateMacros:', JSON.stringify(macros));
+
 
     // ALWAYS use live-calculated macros — never trust stored values in DB
     // (stored targetCaloriesPerDay/targetProteinPerDay may be stale from old sessions)
@@ -42,7 +42,7 @@ exports.getGoal = async (req, res) => {
         const response = await buildGoalResponse(goal, req.userId);
         res.json(response);
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        res.status(err.name === 'ValidationError' ? 400 : 500).json({ message: err.name === 'ValidationError' ? 'Invalid goal' : 'Internal server error' });
     }
 };
 
@@ -76,12 +76,12 @@ exports.upsertGoal = async (req, res) => {
         const goal = await Goal.findOneAndUpdate(
             { userId: req.userId },
             { $set: update },
-            { new: true, upsert: true, setDefaultsOnInsert: true }
+            { new: true, upsert: true, setDefaultsOnInsert: true, runValidators: true }
         );
 
         const response = await buildGoalResponse(goal, req.userId);
         return res.json(response);
     } catch (err) {
-        res.status(500).json({ message: err.message });
+        res.status(err.name === 'ValidationError' ? 400 : 500).json({ message: err.name === 'ValidationError' ? 'Invalid goal' : 'Internal server error' });
     }
 };

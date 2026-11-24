@@ -22,6 +22,7 @@ const userSchema = new mongoose.Schema({
     // legacy — залишаємо для зворотної сумісності, але більше не використовуємо для TDEE
     activityLevel: { type: String, enum: ['sedentary', 'light', 'moderate', 'active', 'very_active'], default: 'moderate' },
 
+    tokenVersion: { type: Number, default: 0, select: false },
     isOnline: { type: Boolean, default: false },
 
     bodyMetrics: [{

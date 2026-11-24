@@ -4,7 +4,6 @@ const cors = require('cors');
 const authRoutes = require('./routes/authRoutes');
 const workoutRoutes = require('./routes/workoutRoutes');
 const commentRoutes = require('./routes/commentRoutes');
-const aiRoutes = require('./routes/aiRoutes');
 const userRoutes = require('./routes/userRoutes');
 const newsRoutes = require('./routes/newsRoutes');
 const mealRoutes = require('./routes/mealRoutes');
@@ -13,18 +12,29 @@ const cardioRoutes = require('./routes/cardioRoutes');
 
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+const origins = new Set((process.env.CORS_ORIGINS || 'https://workout-frontend-935r.onrender.com,http://localhost:5173').split(',').map(s => s.trim()));
+app.use(cors({ origin: (origin, cb) => cb(null, !origin || origins.has(origin)) }));
+app.disable('x-powered-by');
+if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
+app.use(express.json({ limit: '128kb' }));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/workouts', workoutRoutes);
 app.use('/api/comments', commentRoutes);
-app.use('/api/ai', aiRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/news', newsRoutes);
 app.use('/api/meals', mealRoutes);
 app.use('/api/goals', goalRoutes);
 app.use('/api/cardio', cardioRoutes);
 
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.use((req, res) => res.status(404).json({ message: 'Not found' }));
+app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    if (err.type === 'entity.parse.failed') return res.status(400).json({ message: 'Invalid JSON' });
+    if (err.type === 'entity.too.large') return res.status(413).json({ message: 'Payload too large' });
+    console.error(err.name || 'Error');
+    res.status(500).json({ message: 'Internal server error' });
+});
 module.exports = app;
 
