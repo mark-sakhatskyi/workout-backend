@@ -42,7 +42,8 @@ exports.getCardio = async (req, res) => {
         
         Object.assign(filter, dateFilter(req.query));
         
-        if (type) {
+        if (type !== undefined) {
+            if (typeof type !== 'string' || !Cardio.schema.path('type').enumValues.includes(type)) return res.status(400).json({ message: 'Invalid cardio type' });
             filter.type = type;
         }
 
@@ -128,6 +129,10 @@ exports.getCardioStats = async (req, res) => {
         const filter = { userId: req.userId };
         Object.assign(filter, dateFilter(req.query));
 
+        if (req.query.type !== undefined) {
+            if (typeof req.query.type !== 'string' || !Cardio.schema.path('type').enumValues.includes(req.query.type)) return res.status(400).json({ message: 'Invalid cardio type' });
+            filter.type = req.query.type;
+        }
         const sessions = await Cardio.find(filter);
 
         const stats = {
@@ -142,18 +147,18 @@ exports.getCardioStats = async (req, res) => {
         };
 
         if (sessions.length > 0) {
-            const hrSessions = sessions.filter(s => s.avgHeartRate);
-            const paceSessions = sessions.filter(s => s.avgPace);
-            const speedSessions = sessions.filter(s => s.avgSpeed);
+            const hrSessions = sessions.filter(s => s.avgHeartRate > 0 && s.duration > 0);
+            const paceSessions = sessions.filter(s => s.avgPace > 0 && s.distance > 0);
+            const speedSessions = sessions.filter(s => s.avgSpeed > 0 && s.duration > 0);
 
             if (hrSessions.length) {
                 stats.avgHeartRate = Math.round(hrSessions.reduce((sum, s) => sum + s.avgHeartRate * s.duration, 0) / hrSessions.reduce((sum, s) => sum + s.duration, 0));
             }
             if (paceSessions.length) {
-                stats.avgPace = Math.round(paceSessions.reduce((sum, s) => sum + s.avgPace, 0) / paceSessions.length * 100) / 100;
+                stats.avgPace = Math.round(paceSessions.reduce((sum, s) => sum + s.avgPace * s.distance, 0) / paceSessions.reduce((sum, s) => sum + s.distance, 0) * 100) / 100;
             }
             if (speedSessions.length) {
-                stats.avgSpeed = Math.round(speedSessions.reduce((sum, s) => sum + s.avgSpeed, 0) / speedSessions.length * 100) / 100;
+                stats.avgSpeed = Math.round(speedSessions.reduce((sum, s) => sum + s.avgSpeed * s.duration, 0) / speedSessions.reduce((sum, s) => sum + s.duration, 0) * 100) / 100;
             }
 
             // Group by type

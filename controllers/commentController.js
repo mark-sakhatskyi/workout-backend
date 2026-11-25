@@ -53,15 +53,12 @@ exports.deleteComment = async (req, res) => {
 exports.updateComment = async (req, res) => {
     try {
         const { text, date } = req.body;
-        const comment = await Comment.findById(req.params.id);
+        const comment = await Comment.findOne({ _id: req.params.id, userId: req.userId });
 
         if (!comment) {
             return res.status(404).json({ message: 'Comment not found' });
         }
 
-        if (comment.userId.toString() !== req.userId) {
-            return res.status(403).json({ message: 'Forbidden' });
-        }
 
         if (text !== undefined) comment.text = text;
         if (date !== undefined) comment.date = date;

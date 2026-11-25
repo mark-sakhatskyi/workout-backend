@@ -3,18 +3,15 @@ const Goal = require('../models/Goal');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
-const { estimateMacros } = require('../services/macroEstimator');
+const { estimateEffectiveMacros } = require('../services/macroEstimator');
+const { latestMetrics, metricChanges, sorted } = require('../services/bodyMetrics');
+const { validDate } = require('../middleware/validation');
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const validPassword = password => typeof password === 'string' && password.length >= 6 && Buffer.byteLength(password) <= 72;
 const issueToken = user => jwt.sign({ userId: user._id.toString(), tokenVersion: user.tokenVersion ?? 0 }, process.env.JWT_SECRET, { expiresIn: '7d', algorithm: 'HS256' });
 
-const allMetricFields = [
-    'weight', 'neck', 'chest', 'waist', 'hips', 'biceps', 'forearm',
-    'bmi', 'bodyFat', 'subcutaneousFat', 'visceralFat', 'bodyWater',
-    'muscleMass', 'boneMass', 'bmr', 'metabolicAge',
-];
 
 exports.register = async (req, res) => {
     try {
@@ -32,7 +29,7 @@ exports.register = async (req, res) => {
 
         res.status(201).json({token, user: {id: user._id, name: user.name, email: user.email}});
     } catch (err) {
-        res.status(err.name === 'ValidationError' ? 400 : err.code === 11000 ? 409 : 500).json({message: err.name === 'ValidationError' ? 'Invalid data' : err.code === 11000 ? 'Account already exists' : 'Internal server error'});
+        res.status((err.status === 400 || err.name === 'ValidationError') ? 400 : err.code === 11000 ? 409 : 500).json({message: (err.status === 400 || err.name === 'ValidationError') ? 'Invalid data' : err.code === 11000 ? 'Account already exists' : 'Internal server error'});
     }
 };
 
@@ -57,7 +54,7 @@ exports.login = async (req, res) => {
 
         res.json({token, user: {id: user._id, name: user.name, email: user.email}});
     } catch (err) {
-        res.status(err.name === 'ValidationError' ? 400 : err.code === 11000 ? 409 : 500).json({message: err.name === 'ValidationError' ? 'Invalid data' : err.code === 11000 ? 'Account already exists' : 'Internal server error'});
+        res.status((err.status === 400 || err.name === 'ValidationError') ? 400 : err.code === 11000 ? 409 : 500).json({message: (err.status === 400 || err.name === 'ValidationError') ? 'Invalid data' : err.code === 11000 ? 'Account already exists' : 'Internal server error'});
     }
 };
 
@@ -129,6 +126,9 @@ exports.getProfile = async (req, res) => {
         if (!user) return res.status(404).json({message: 'User not found'});
 
         const userObj = user.toObject();
+        delete userObj.googleId;
+        delete userObj.tokenVersion;
+        userObj.latestBodyMetrics = latestMetrics(userObj.bodyMetrics);
 
         if (Array.isArray(userObj.bodyMetrics)) {
             userObj.bodyMetrics.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -138,7 +138,7 @@ exports.getProfile = async (req, res) => {
         res.json(userObj);
     } catch (err) {
         console.error(err);
-        res.status(err.name === 'ValidationError' ? 400 : err.code === 11000 ? 409 : 500).json({message: err.name === 'ValidationError' ? 'Invalid data' : err.code === 11000 ? 'Account already exists' : 'Internal server error'});
+        res.status((err.status === 400 || err.name === 'ValidationError') ? 400 : err.code === 11000 ? 409 : 500).json({message: (err.status === 400 || err.name === 'ValidationError') ? 'Invalid data' : err.code === 11000 ? 'Account already exists' : 'Internal server error'});
     }
 };
 
@@ -150,7 +150,11 @@ exports.updateProfile = async (req, res) => {
         const user = await User.findById(req.userId);
         if (!user) return res.status(404).json({message: 'User not found'});
 
-        if (name !== undefined) user.name = name;
+        if (name !== undefined && (typeof name !== 'string' || !name.trim() || name.length > 100)) return res.status(400).json({ message: 'Invalid name' });
+        if (birthDate !== undefined && birthDate !== '' && !validDate(birthDate)) return res.status(400).json({ message: 'Invalid birth date' });
+        if (height !== undefined && height !== null && (typeof height !== 'number' || !Number.isFinite(height) || height <= 0 || height > 300)) return res.status(400).json({ message: 'Invalid height' });
+        if (workoutsPerWeek !== undefined && (!Number.isInteger(workoutsPerWeek) || workoutsPerWeek < 0 || workoutsPerWeek > 7)) return res.status(400).json({ message: 'Invalid workout frequency' });
+        if (name !== undefined) user.name = name.trim();
         if (birthDate !== undefined) user.birthDate = birthDate;
         if (gender !== undefined) user.gender = gender;
         if (height !== undefined) user.height = height;
@@ -163,38 +167,13 @@ exports.updateProfile = async (req, res) => {
             user.bodyMetrics = [];
         }
 
-        if (Array.isArray(bodyMetrics) && bodyMetrics.length && bodyMetrics[0] && typeof bodyMetrics[0] === 'object') {
-            const m = bodyMetrics[0];
-            if (allMetricFields.some(f => m[f] != null && m[f] !== '' && (typeof m[f] !== 'number' || !Number.isFinite(m[f]) || m[f] < 0))) return res.status(400).json({ message: 'Invalid body metrics' });
-
-            // Check if there's anything meaningful to save
-            const hasAnyValue = allMetricFields.some(f => m[f] != null && m[f] !== '' && m[f] !== 0);
-
-            if (hasAnyValue) {
-                // Merge with previous latest entry so we don't lose fields
-                // (e.g. user entered BMR last time but didn't re-enter it now)
-                const prevLatest = user.bodyMetrics.length
-                    ? user.bodyMetrics[user.bodyMetrics.length - 1]
-                    : {};
-
-                const newMetrics = { date: new Date() };
-                allMetricFields.forEach(f => {
-                    // Use new value if provided, otherwise carry forward from previous
-                    const newVal = m[f] != null && m[f] !== '' ? m[f] : undefined;
-                    const prevVal = prevLatest[f] != null ? prevLatest[f] : undefined;
-                    if (newVal !== undefined) {
-                        newMetrics[f] = newVal;
-                    } else if (prevVal !== undefined) {
-                        newMetrics[f] = prevVal;
-                    }
-                });
-
-                user.bodyMetrics.push(newMetrics);
-            }
+        if (bodyMetrics !== undefined) {
+            const delta = metricChanges(user.bodyMetrics, bodyMetrics);
+            if (Object.keys(delta).length) user.bodyMetrics.push({ date: new Date(), ...delta });
         }
 
         await user.save();
-        const last10Metrics = user.bodyMetrics.slice(-10);
+        const last10Metrics = sorted(user.bodyMetrics).slice(0, 10);
 
         // ── Live-recalculate macro targets after ANY change that affects TDEE ──
         // Triggers: body metrics, jobType, workoutsPerWeek, dailyActivity, height, gender, birthDate
@@ -206,7 +185,7 @@ exports.updateProfile = async (req, res) => {
                 const freshUser = await User.findById(req.userId)
                     .select('bodyMetrics height gender birthDate jobType workoutsPerWeek dailyActivity')
                     .lean();
-                const macros = estimateMacros(freshUser, goal);
+                const macros = estimateEffectiveMacros(freshUser, goal);
 
                 if (macros.calories && macros.protein) {
                     macroRecalcResult = {
@@ -226,6 +205,7 @@ exports.updateProfile = async (req, res) => {
         res.json({
             id: req.userId,
             name: user.name,
+            email: user.email,
             birthDate: user.birthDate,
             height: user.height,
             gender: user.gender,
@@ -234,12 +214,13 @@ exports.updateProfile = async (req, res) => {
             workoutsPerWeek: user.workoutsPerWeek,
             dailyActivity: user.dailyActivity,
             bodyMetrics: last10Metrics,
+            latestBodyMetrics: latestMetrics(user.bodyMetrics),
             ...(macroRecalcResult ? { _macroRecalc: macroRecalcResult } : {}),
         });
 
     } catch (err) {
         console.error(err);
-        res.status(err.name === 'ValidationError' ? 400 : err.code === 11000 ? 409 : 500).json({message: err.name === 'ValidationError' ? 'Invalid data' : err.code === 11000 ? 'Account already exists' : 'Internal server error'});
+        res.status((err.status === 400 || err.name === 'ValidationError') ? 400 : err.code === 11000 ? 409 : 500).json({message: (err.status === 400 || err.name === 'ValidationError') ? 'Invalid data' : err.code === 11000 ? 'Account already exists' : 'Internal server error'});
     }
 };
 
@@ -271,6 +252,6 @@ exports.getBodyMetricsHistory = async (req, res) => {
         res.json(metrics);
     } catch (err) {
         console.error(err);
-        res.status(500).json({ message: err.message });
+        res.status(500).json({ message: 'Internal server error' });
     }
 };

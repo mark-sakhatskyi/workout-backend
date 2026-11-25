@@ -45,10 +45,9 @@ exports.addMeal = async (req, res) => {
 exports.updateMeal = async (req, res) => {
     try {
         const { name, calories, protein, fats, carbs, grams, date } = req.body;
-        const meal = await Meal.findById(req.params.id);
+        const meal = await Meal.findOne({ _id: req.params.id, userId: req.userId });
 
         if (!meal) return res.status(404).json({ message: 'Meal not found' });
-        if (meal.userId.toString() !== req.userId) return res.status(403).json({ message: 'Forbidden' });
 
         if (name !== undefined) meal.name = name;
         if (calories !== undefined) meal.calories = calories;

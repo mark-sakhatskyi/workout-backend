@@ -23,15 +23,12 @@ exports.addWorkout = async (req, res) => {
 exports.updateWorkout = async (req, res) => {
     try {
         const { date, name, weight, sets, reps, difficulty } = req.body;
-        const workout = await Workout.findById(req.params.id);
+        const workout = await Workout.findOne({ _id: req.params.id, userId: req.userId });
 
         if (!workout) {
             return res.status(404).json({ message: 'Workout not found' });
         }
 
-        if (workout.userId.toString() !== req.userId) {
-            return res.status(403).json({ message: 'Forbidden' });
-        }
 
         if (name !== undefined) workout.name = name;
         if (weight !== undefined) workout.weight = weight;

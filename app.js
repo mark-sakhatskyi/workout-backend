@@ -27,7 +27,10 @@ app.use('/api/meals', mealRoutes);
 app.use('/api/goals', goalRoutes);
 app.use('/api/cardio', cardioRoutes);
 
-app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/health', (req, res) => {
+    const ready = require('mongoose').connection.readyState === 1;
+    res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'unavailable' });
+});
 app.use((req, res) => res.status(404).json({ message: 'Not found' }));
 app.use((err, req, res, next) => {
     if (res.headersSent) return next(err);

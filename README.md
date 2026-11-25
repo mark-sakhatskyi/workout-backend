@@ -1,17 +1,11 @@
 # Workout Tracker backend
 
-The legacy MongoDB API remains available with `npm start` while preparing the migration. The PostgreSQL API uses the same REST paths (except the removed AI API and disabled user directories).
+Node.js / Express / Mongoose / MongoDB. PostgreSQL migration cancelled; existing MongoDB is retained. AI endpoints are removed; historical AI documents are not deleted.
 
-## Safe migration
+## Development
+Set MONGO_URI and JWT_SECRET in .env; optionally CORS_ORIGINS, GOOGLE_CLIENT_ID and PORT. Never commit credentials. Set TRUST_PROXY=1 only after verifying the proxy topology.
+Run npm ci, npm test, npm run dev. Production: npm start.
 
-1. Create a dedicated PostgreSQL instance. Do not use expiring free storage for the only copy of production data. Back up MongoDB and test restore.
-2. Set `MONGO_URI` (source), `DATABASE_URL` (target), `JWT_SECRET` (keep existing secret during cutover), and `CORS_ORIGINS` via environment variables, never Git. Set `TRUST_PROXY=1` only after verifying Render's proxy behavior.
-3. Run `npm ci`, `npm test` and `npm run db:migrate:mongo` to inspect source counts without writing.
-4. Freeze all source writes, verify the backup, and run `CONFIRM_MONGO_READ_ONLY_WINDOW=1 npm run db:migrate:mongo -- --apply`. Import is transactional, refuses nonempty target, preserves Mongo and nanoid IDs, password hashes, records and body-metric history, checks counts. Invalid legacy dates or orphaned rows abort the transaction. Old AI results remain in the Mongo backup only.
-5. Run `npm run start:postgres` on a staging service, verify login, profile, workout/cardio/meal/comment CRUD, goal calculations, calendar/statistics and record totals against the source.
-6. Switch Render start command to `npm run start:postgres` only after successful staging, with `DATABASE_URL` configured. Keep Mongo backup and old deployment available. If rollback is needed after new writes, export/reconcile PostgreSQL changes first to avoid data loss.
-7. For an intentional fresh development database only, run `npm run db:schema` then `ALLOW_EMPTY_POSTGRES=1 npm run start:postgres`.
+The schema changes are additive (manual goal fields, tokenVersion, indexes and sparse new metric records). Existing IDs and collections are retained. Back up MongoDB before deployment; no destructive migration is needed. Old metric records remain unchanged. Logout invalidates all previous tokens for that user.
 
-The initial SQL layout uses relational ownership, date columns, foreign keys and indexes, with JSONB payloads preserving legacy field shapes. A later migration may normalize individual domain fields after reviewing actual records. The API does not need MongoDB for normal PostgreSQL operation. Mongoose remains solely for the legacy rollback server and import script.
-
-Never share real credentials in issues or commits. Free Render PostgreSQL expires; configure a durable target before production migration.
+Integration tests run only with TEST_MONGO_URI set to a disposable MongoDB instance. CI uses its own MongoDB service, never production.
