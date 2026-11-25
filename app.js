@@ -18,6 +18,13 @@ app.disable('x-powered-by');
 if (process.env.TRUST_PROXY === '1') app.set('trust proxy', 1);
 app.use(express.json({ limit: '128kb' }));
 
+app.use('/api', (req, res, next) => {
+    if (require('mongoose').connection.readyState !== 1) {
+        res.set('Retry-After', '30');
+        return res.status(503).json({ message: 'Database temporarily unavailable' });
+    }
+    next();
+});
 app.use('/api/auth', authRoutes);
 app.use('/api/workouts', workoutRoutes);
 app.use('/api/comments', commentRoutes);
